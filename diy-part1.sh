@@ -11,3 +11,6 @@ sed -i '$a src-git lienol https://github.com/Lienol/openwrt-package' ./feeds.con
 
 # homeproxy
 #git clone --depth=1 https://github.com/immortalwrt/homeproxy.git package/homeproxy
+
+# Clone luci-app-parentcontrol from sirpdboy
+git clone https://github.com/sirpdboy/luci-app-parentcontrol.git package/luci-app-parentcontrol
