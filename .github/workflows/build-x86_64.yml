@@ -8,7 +8,7 @@ env:
   REPO_URL: https://github.com/coolsnowwolf/lede
   REPO_BRANCH: master
   
-  # ✅ 配置和脚本路径变量，方便跨平台切换
+  # 配置和脚本路径变量
   CONFIG_FILE: x86_64.config    # 平台特定的配置
   DIY_P1_SH: diy-part1.sh      # 通用脚本：Feeds 和基础软件包
   DIY_P2_SH: x86_64-part2.sh   # 平台特定脚本：例如修改 IP
@@ -32,6 +32,23 @@ jobs:
         
       - name: Set up time zone
         run: sudo timedatectl set-timezone "$TZ"
+
+      # 🌟 关键步骤：检测 DIY 脚本的实际根路径
+      - name: Set Script Root Path
+        id: script_path
+        run: |
+          # 检查文件是否在 $GITHUB_WORKSPACE 根目录
+          if [ -f "$GITHUB_WORKSPACE/$DIY_P1_SH" ]; then
+            echo "::notice::Scripts found in \$GITHUB_WORKSPACE root."
+            echo "SCRIPT_ROOT_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_OUTPUT"
+          # 检查文件是否在 openwrt/ 子目录 (如果 Checkout 配置了路径)
+          elif [ -f "$GITHUB_WORKSPACE/openwrt/$DIY_P1_SH" ]; then
+            echo "::warning::Scripts found in \$GITHUB_WORKSPACE/openwrt/. Adjusting path."
+            echo "SCRIPT_ROOT_DIR=$GITHUB_WORKSPACE/openwrt" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::DIY Scripts ($DIY_P1_SH) are not in the expected locations. Checkout failed."
+            exit 1
+          fi
 
       - name: Free up disk space
         uses: easimon/maximize-build-space@v8
@@ -68,22 +85,18 @@ jobs:
             ${{ runner.os }}-lede-dl-feeds-
 
       - name: Apply custom feeds (DIY-Part1)
-        working-directory: openwrt  # <-- 当前目录是 openwrt/
+        working-directory: openwrt
         run: |
-          # 拷贝 feeds.conf.default 文件
-          if [ -f "$GITHUB_WORKSPACE/feeds.conf.default" ]; then
-            # 路径保持不变，因为 feeds.conf.default 不在 openwrt 目录下
-            cp "$GITHUB_WORKSPACE/feeds.conf.default" feeds.conf.default
+          # 使用动态检测到的脚本根路径
+          SCRIPT_ROOT=${{ steps.script_path.outputs.SCRIPT_ROOT_DIR }}
+          DIY_P1_PATH="$SCRIPT_ROOT/$DIY_P1_SH"
+          
+          # 拷贝 feeds.conf.default 文件 (如果存在)
+          if [ -f "$SCRIPT_ROOT/feeds.conf.default" ]; then
+            cp "$SCRIPT_ROOT/feeds.conf.default" feeds.conf.default
           fi
           
-          # 🌟 关键修改：使用相对路径访问父目录 (../)
-          DIY_P1_PATH="../$DIY_P1_SH" 
-          if [ ! -f "$DIY_P1_PATH" ]; then
-            echo "❌ Fatal Error: DIY-Part1 script not found at $DIY_P1_PATH" >&2
-            exit 1 
-          fi
-
-          echo "Executing DIY-Part1 script: $DIY_P1_PATH"
+          echo "Executing DIY-Part1 script from: $DIY_P1_PATH"
           chmod +x "$DIY_P1_PATH"
           "$DIY_P1_PATH"
 
@@ -96,17 +109,22 @@ jobs:
       - name: Apply custom config and patches (DIY-Part2)
         working-directory: openwrt
         run: |
+          # 使用动态检测到的脚本根路径
+          SCRIPT_ROOT=${{ steps.script_path.outputs.SCRIPT_ROOT_DIR }}
+          DIY_P2_PATH="$SCRIPT_ROOT/$DIY_P2_SH"
+          
           # 1. 拷贝自定义文件 (files 目录)
-          if [ -e "$GITHUB_WORKSPACE/files" ]; then
-            cp -r "$GITHUB_WORKSPACE/files" ./
+          if [ -e "$SCRIPT_ROOT/files" ]; then
+            cp -r "$SCRIPT_ROOT/files" ./
           fi
           # 2. 拷贝 .config 文件
-          if [ -e "$GITHUB_WORKSPACE/$CONFIG_FILE" ]; then
-            cp "$GITHUB_WORKSPACE/$CONFIG_FILE" .config
+          if [ -e "$SCRIPT_ROOT/$CONFIG_FILE" ]; then
+            cp "$SCRIPT_ROOT/$CONFIG_FILE" .config
           fi
-          # 3. 执行 DIY-Part2 脚本 (例如修改 IP)
-          chmod +x "$GITHUB_WORKSPACE/$DIY_P2_SH"
-          "$GITHUB_WORKSPACE/$DIY_P2_SH"
+          # 3. 执行 DIY-Part2 脚本
+          echo "Executing DIY-Part2 script from: $DIY_P2_PATH"
+          chmod +x "$DIY_P2_PATH"
+          "$DIY_P2_PATH"
           
       - name: Download sources
         working-directory: openwrt
