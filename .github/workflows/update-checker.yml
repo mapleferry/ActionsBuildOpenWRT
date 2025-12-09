@@ -3,11 +3,13 @@ name: Update Checker
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
   REPO_BRANCH: master
+  # 固定 Key 用于存储/恢复上次检查到的 Hash
+  CACHE_KEY: lede-master-last-commit
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 * * *"  # UTC+8 02:00 → GitHub Actions cron is UTC
+    - cron: "0 18 * * *"  # UTC 18:00 (UTC+8 02:00)
 
 jobs:
   check:
@@ -16,33 +18,67 @@ jobs:
       - name: Checkout dummy
         uses: actions/checkout@v4
 
+      - name: Restore last commit hash
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: .last_commit
+          key: ${{ env.CACHE_KEY }}
+
       - name: Get current HEAD
         id: getHash
         run: |
-          git clone --depth=1 "$REPO_URL" -b "$REPO_BRANCH" .
-          echo "commit_hash=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # 1. Clone source code
+          git clone --depth=1 "$REPO_URL" -b "$REPO_BRANCH" temp_lede
+          cd temp_lede
+          # 2. Get current hash
+          CURRENT_HASH=$(git rev-parse HEAD)
+          echo "commit_hash=$CURRENT_HASH" >> "$GITHUB_OUTPUT"
+          cd ..
+          rm -rf temp_lede
 
-      - name: Restore last commit
-        id: restore
-        uses: actions/cache@v4
+          # 3. Read previous hash from restored file
+          if [ -f .last_commit ]; then
+            PREV_HASH=$(cat .last_commit)
+          else
+            # If no previous hash, use a placeholder that will not match CURRENT_HASH
+            PREV_HASH="FIRST_RUN"
+          fi
+          
+          echo "Prev Hash: $PREV_HASH"
+          echo "Current Hash: $CURRENT_HASH"
+          
+          if [ "$PREV_HASH" == "$CURRENT_HASH" ]; then
+            echo "::notice title=Code Status::Source code has not changed."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=Code Status::Source code has been updated! Triggering build."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          
+      - name: Save new hash and trigger build if changed
+        if: steps.getHash.outputs.changed == 'true'
+        run: |
+          # Save the current hash for the next check
+          echo "${{ steps.getHash.outputs.commit_hash }}" > .last_commit
+          
+      - name: Save last commit hash
+        uses: actions/cache/save@v4
+        if: steps.getHash.outputs.changed == 'true'
         with:
           path: .last_commit
-          key: lede-master-${{ steps.getHash.outputs.commit_hash }}
-
-      - name: Save and trigger if changed
-        if: steps.restore.outputs.cache-hit != 'true'
-        run: |
-          echo "${{ steps.getHash.outputs.commit_hash }}" > .last_commit
-
+          key: ${{ env.CACHE_KEY }}
+          
       - name: Trigger build workflow
-        if: steps.restore.outputs.cache-hit != 'true'
+        if: steps.getHash.outputs.changed == 'true'
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.ACTIONS_TRIGGER_PAT }}
           event-type: Source Code Update
+          client-payload: '{"commit_hash": "${{ steps.getHash.outputs.commit_hash }}"}'
 
       - name: Clean old runs
         uses: Mattraks/delete-workflow-runs@v2
         with:
-          retain_days: 2
+          retain_days: 7  # 增加到 7 天，以保留更长时间的日志
           keep_minimum_runs: 0

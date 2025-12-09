@@ -7,10 +7,13 @@ on:
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
   REPO_BRANCH: master
-  FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: x86_64.config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: x86_64-part2.sh
+  
+  # ✅ 配置和脚本路径变量，方便跨平台切换
+  CONFIG_FILE: x86_64.config    # 平台特定的配置
+  DIY_P1_SH: diy-part1.sh      # 通用脚本：Feeds 和基础软件包
+  DIY_P2_SH: x86_64-part2.sh   # 平台特定脚本：例如修改 IP
+
+  # 上传和时区配置
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_COWTRANSFER: false
@@ -20,12 +23,15 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04  # ✅ 明确指定 LTS 版本，避免未来兼容问题
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
 
     steps:
       - name: Checkout self
         uses: actions/checkout@v4
+        
+      - name: Set up time zone
+        run: sudo timedatectl set-timezone "$TZ"
 
       - name: Free up disk space
         uses: easimon/maximize-build-space@v8
@@ -41,7 +47,6 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo timedatectl set-timezone "$TZ"
           sudo apt update
           sudo apt install -y --no-install-recommends \
             build-essential clang cmake g++ git libncurses5-dev libssl-dev \
@@ -62,47 +67,43 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-lede-dl-feeds-
 
-      - name: Apply custom feeds
+      - name: Apply custom feeds (DIY-Part1)
         working-directory: openwrt
         run: |
-          if [ -e "$GITHUB_WORKSPACE/$FEEDS_CONF" ]; then
-            cp "$GITHUB_WORKSPACE/$FEEDS_CONF" feeds.conf.default
+          # 拷贝 feeds.conf.default 文件 (如果存在)
+          if [ -e "$GITHUB_WORKSPACE/feeds.conf.default" ]; then
+            cp "$GITHUB_WORKSPACE/feeds.conf.default" feeds.conf.default
           fi
+          # 执行 DIY-Part1 脚本
+          chmod +x "$GITHUB_WORKSPACE/$DIY_P1_SH"
           "$GITHUB_WORKSPACE/$DIY_P1_SH"
-
-      - name: Apply custom config and patches
-        working-directory: openwrt
-        run: |
-          if [ -e "$GITHUB_WORKSPACE/files" ]; then
-            cp -r "$GITHUB_WORKSPACE/files" ./
-          fi
-          if [ -e "$GITHUB_WORKSPACE/$CONFIG_FILE" ]; then
-            cp "$GITHUB_WORKSPACE/$CONFIG_FILE" .config
-          fi
-          "$GITHUB_WORKSPACE/$DIY_P2_SH"
 
       - name: Update and install feeds
         working-directory: openwrt
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-
-      - name: Apply custom config and patches
+          
+      - name: Apply custom config and patches (DIY-Part2)
+        working-directory: openwrt
         run: |
+          # 1. 拷贝自定义文件 (files 目录)
           if [ -e "$GITHUB_WORKSPACE/files" ]; then
-            mv "$GITHUB_WORKSPACE/files" openwrt/files
+            cp -r "$GITHUB_WORKSPACE/files" ./
           fi
+          # 2. 拷贝 .config 文件
           if [ -e "$GITHUB_WORKSPACE/$CONFIG_FILE" ]; then
-            mv "$GITHUB_WORKSPACE/$CONFIG_FILE" openwrt/.config
+            cp "$GITHUB_WORKSPACE/$CONFIG_FILE" .config
           fi
+          # 3. 执行 DIY-Part2 脚本 (例如修改 IP)
           chmod +x "$GITHUB_WORKSPACE/$DIY_P2_SH"
-          cd openwrt && "$GITHUB_WORKSPACE/$DIY_P2_SH"
-
+          "$GITHUB_WORKSPACE/$DIY_P2_SH"
+          
       - name: Download sources
         working-directory: openwrt
         run: |
           make defconfig
-          # ✅ Robust download with retry
+          # 健壮的下载，带重试
           make download -j$(($(nproc) + 1)) || make download -j1
 
       - name: Compile firmware
@@ -110,7 +111,6 @@ jobs:
         working-directory: openwrt
         run: |
           echo "🧵 Using $(nproc) threads"
-          # ⚠️ coolsnowwolf/lede 推荐首次编译用 -j1，但 Actions 可用多线程
           make -j$(($(nproc) + 1)) V=s
           echo "status=success" >> "$GITHUB_OUTPUT"
           DEVICE=$(grep -m1 '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/')
@@ -121,7 +121,7 @@ jobs:
         id: organize
         if: env.UPLOAD_FIRMWARE == 'true'
         run: |
-          # ✅ Auto detect target path (more robust than hardcoding x86/64)
+          # 自动检测目标路径
           TARGET_DIR=$(find openwrt/bin/targets -mindepth 2 -maxdepth 2 -type d | head -n1)
           if [ -z "$TARGET_DIR" ] || [ ! -d "$TARGET_DIR" ]; then
             echo "❌ No firmware target directory found!" >&2
