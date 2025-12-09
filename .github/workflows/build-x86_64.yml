@@ -62,26 +62,24 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-lede-dl-feeds-
 
-      - name: Debug: Check file existence
-        run: |
-          echo "Current working directory: $(pwd)"
-          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
-          echo "DIY_P1_SH: $DIY_P1_SH"
-          ls -la "$GITHUB_WORKSPACE/$DIY_P1_SH"
-
       - name: Apply custom feeds
+        working-directory: openwrt
         run: |
-          # Move feeds.conf.default to openwrt dir
           if [ -e "$GITHUB_WORKSPACE/$FEEDS_CONF" ]; then
-            mv "$GITHUB_WORKSPACE/$FEEDS_CONF" openwrt/feeds.conf.default
+            cp "$GITHUB_WORKSPACE/$FEEDS_CONF" feeds.conf.default
           fi
-
-          # Make diy-part1.sh executable using absolute path
-          chmod +x "$GITHUB_WORKSPACE/$DIY_P1_SH"
-
-          # Run the script from the openwrt directory, but with full path
-          cd openwrt
           "$GITHUB_WORKSPACE/$DIY_P1_SH"
+
+      - name: Apply custom config and patches
+        working-directory: openwrt
+        run: |
+          if [ -e "$GITHUB_WORKSPACE/files" ]; then
+            cp -r "$GITHUB_WORKSPACE/files" ./
+          fi
+          if [ -e "$GITHUB_WORKSPACE/$CONFIG_FILE" ]; then
+            cp "$GITHUB_WORKSPACE/$CONFIG_FILE" .config
+          fi
+          "$GITHUB_WORKSPACE/$DIY_P2_SH"
 
       - name: Update and install feeds
         working-directory: openwrt
