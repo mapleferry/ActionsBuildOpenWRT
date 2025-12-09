@@ -70,13 +70,23 @@ jobs:
       - name: Apply custom feeds (DIY-Part1)
         working-directory: openwrt
         run: |
-          # 拷贝 feeds.conf.default 文件 (如果存在)
-          if [ -e "$GITHUB_WORKSPACE/feeds.conf.default" ]; then
+          # 1. 检查 feeds.conf.default 是否存在于项目根目录，并拷贝到 openwrt/
+          if [ -f "$GITHUB_WORKSPACE/feeds.conf.default" ]; then
+            echo "Copying feeds.conf.default from root to openwrt/..."
             cp "$GITHUB_WORKSPACE/feeds.conf.default" feeds.conf.default
           fi
-          # 执行 DIY-Part1 脚本
-          chmod +x "$GITHUB_WORKSPACE/$DIY_P1_SH"
-          "$GITHUB_WORKSPACE/$DIY_P1_SH"
+
+          # 2. 检查 DIY-Part1 脚本是否存在于项目根目录
+          DIY_P1_PATH="$GITHUB_WORKSPACE/$DIY_P1_SH"
+          if [ ! -f "$DIY_P1_PATH" ]; then
+            echo "❌ Fatal Error: DIY-Part1 script not found at $DIY_P1_PATH" >&2
+            exit 1 # 强制停止工作流
+          fi
+
+          # 3. 授权并执行 DIY-Part1 脚本
+          echo "Executing DIY-Part1 script: $DIY_P1_PATH"
+          chmod +x "$DIY_P1_PATH"
+          "$DIY_P1_PATH"
 
       - name: Update and install feeds
         working-directory: openwrt
