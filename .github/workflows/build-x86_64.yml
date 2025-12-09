@@ -68,22 +68,21 @@ jobs:
             ${{ runner.os }}-lede-dl-feeds-
 
       - name: Apply custom feeds (DIY-Part1)
-        working-directory: openwrt
+        working-directory: openwrt  # <-- 当前目录是 openwrt/
         run: |
-          # 1. 检查 feeds.conf.default 是否存在于项目根目录，并拷贝到 openwrt/
+          # 拷贝 feeds.conf.default 文件
           if [ -f "$GITHUB_WORKSPACE/feeds.conf.default" ]; then
-            echo "Copying feeds.conf.default from root to openwrt/..."
+            # 路径保持不变，因为 feeds.conf.default 不在 openwrt 目录下
             cp "$GITHUB_WORKSPACE/feeds.conf.default" feeds.conf.default
           fi
-
-          # 2. 检查 DIY-Part1 脚本是否存在于项目根目录
-          DIY_P1_PATH="$GITHUB_WORKSPACE/$DIY_P1_SH"
+          
+          # 🌟 关键修改：使用相对路径访问父目录 (../)
+          DIY_P1_PATH="../$DIY_P1_SH" 
           if [ ! -f "$DIY_P1_PATH" ]; then
             echo "❌ Fatal Error: DIY-Part1 script not found at $DIY_P1_PATH" >&2
-            exit 1 # 强制停止工作流
+            exit 1 
           fi
 
-          # 3. 授权并执行 DIY-Part1 脚本
           echo "Executing DIY-Part1 script: $DIY_P1_PATH"
           chmod +x "$DIY_P1_PATH"
           "$DIY_P1_PATH"
