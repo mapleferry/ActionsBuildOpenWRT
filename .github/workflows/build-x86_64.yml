@@ -20,7 +20,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # ✅ 明确指定 LTS 版本，避免未来兼容问题
     timeout-minutes: 120
 
     steps:
@@ -38,13 +38,15 @@ jobs:
           remove-docker-images: true
 
       - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           sudo timedatectl set-timezone "$TZ"
           sudo apt update
           sudo apt install -y --no-install-recommends \
             build-essential clang cmake g++ git libncurses5-dev libssl-dev \
             python3 python3-dev python3-pyelftools python3-setuptools rsync subversion unzip wget ccache
-          sudo chown $USER:$USER $GITHUB_WORKSPACE
+          sudo chown "$USER":"$USER" "$GITHUB_WORKSPACE"
 
       - name: Clone source code
         run: |
@@ -56,15 +58,18 @@ jobs:
           path: |
             openwrt/dl
             openwrt/feeds
-          key: ${{ runner.os }}-lede-dl-feeds-${{ hashFiles('feeds.conf.default') }}
+          key: ${{ runner.os }}-lede-dl-feeds-${{ hashFiles('**/feeds.conf.default') }}
           restore-keys: |
             ${{ runner.os }}-lede-dl-feeds-
 
       - name: Apply custom feeds
         run: |
-          [ -e "$FEEDS_CONF" ] && mv "$FEEDS_CONF" openwrt/feeds.conf.default
-          chmod +x "$DIY_P1_SH"
-          (cd openwrt && "$GITHUB_WORKSPACE/$DIY_P1_SH")
+          # ✅ Use absolute path for all file operations
+          if [ -e "$GITHUB_WORKSPACE/$FEEDS_CONF" ]; then
+            mv "$GITHUB_WORKSPACE/$FEEDS_CONF" openwrt/feeds.conf.default
+          fi
+          chmod +x "$GITHUB_WORKSPACE/$DIY_P1_SH"
+          cd openwrt && "$GITHUB_WORKSPACE/$DIY_P1_SH"
 
       - name: Update and install feeds
         working-directory: openwrt
@@ -74,25 +79,31 @@ jobs:
 
       - name: Apply custom config and patches
         run: |
-          [ -e files ] && mv files openwrt/files
-          [ -e "$CONFIG_FILE" ] && mv "$CONFIG_FILE" openwrt/.config
-          chmod +x "$DIY_P2_SH"
-          (cd openwrt && "$GITHUB_WORKSPACE/$DIY_P2_SH")
+          if [ -e "$GITHUB_WORKSPACE/files" ]; then
+            mv "$GITHUB_WORKSPACE/files" openwrt/files
+          fi
+          if [ -e "$GITHUB_WORKSPACE/$CONFIG_FILE" ]; then
+            mv "$GITHUB_WORKSPACE/$CONFIG_FILE" openwrt/.config
+          fi
+          chmod +x "$GITHUB_WORKSPACE/$DIY_P2_SH"
+          cd openwrt && "$GITHUB_WORKSPACE/$DIY_P2_SH"
 
       - name: Download sources
         working-directory: openwrt
         run: |
           make defconfig
-          make download -j$(($(nproc) * 3 / 2)) || make download -j1
+          # ✅ Robust download with retry
+          make download -j$(($(nproc) + 1)) || make download -j1
 
       - name: Compile firmware
         id: compile
         working-directory: openwrt
         run: |
           echo "🧵 Using $(nproc) threads"
-          make -j$(($(nproc) * 3 / 2)) V=s
+          # ⚠️ coolsnowwolf/lede 推荐首次编译用 -j1，但 Actions 可用多线程
+          make -j$(($(nproc) + 1)) V=s
           echo "status=success" >> "$GITHUB_OUTPUT"
-          DEVICE=$(grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/')
+          DEVICE=$(grep -m1 '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/')
           echo "DEVICE_NAME=${DEVICE:+_$DEVICE}" >> "$GITHUB_ENV"
           echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> "$GITHUB_ENV"
 
@@ -100,14 +111,14 @@ jobs:
         id: organize
         if: env.UPLOAD_FIRMWARE == 'true'
         run: |
-          # Assume x86/64 target
-          FIRMWARE_DIR="openwrt/bin/targets/x86/64"
-          if [[ ! -d "$FIRMWARE_DIR" ]]; then
-            echo "❌ Firmware directory not found!" >&2
+          # ✅ Auto detect target path (more robust than hardcoding x86/64)
+          TARGET_DIR=$(find openwrt/bin/targets -mindepth 2 -maxdepth 2 -type d | head -n1)
+          if [ -z "$TARGET_DIR" ] || [ ! -d "$TARGET_DIR" ]; then
+            echo "❌ No firmware target directory found!" >&2
             exit 1
           fi
-          rm -rf "$FIRMWARE_DIR/packages"
-          echo "FIRMWARE=$GITHUB_WORKSPACE/$FIRMWARE_DIR" >> "$GITHUB_ENV"
+          rm -rf "$TARGET_DIR/packages"
+          echo "FIRMWARE=$GITHUB_WORKSPACE/$TARGET_DIR" >> "$GITHUB_ENV"
           echo "status=success" >> "$GITHUB_OUTPUT"
 
       - name: Upload firmware artifact
@@ -116,11 +127,6 @@ jobs:
         with:
           name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: ${{ env.FIRMWARE }}
-
-      # Optional upload steps (cowtransfer, wetransfer, release) remain unchanged
-      # - name: Upload to cowtransfer ...
-      # - name: Upload to wetransfer ...
-      # - name: Create GitHub Release ...
 
       - name: Cleanup old workflow runs
         uses: Mattraks/delete-workflow-runs@v2
