@@ -12,6 +12,9 @@ env:
   CONFIG_FILE: x86_64.config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: x86_64-part2.sh
+  
+  # 🌟 关键：新的固定脚本配置目录，用于隔离文件
+  DIY_CONFIG_DIR: diy_config 
 
   # 上传和时区配置
   UPLOAD_BIN_DIR: false
@@ -27,15 +30,29 @@ jobs:
     timeout-minutes: 120
 
     steps:
+      # 1. 隔离项目文件
       - name: Checkout self (Isolate to self_repo/)
         uses: actions/checkout@v4
         with:
-          path: self_repo # 🌟 关键修复：强制隔离项目文件
+          path: self_repo # 强制将项目文件克隆到 self_repo/ 目录下
         
       - name: Set up time zone
         run: sudo timedatectl set-timezone "$TZ"
 
-      # 移除 Set Script Root Path 步骤，因为路径现在是固定的
+      # 2. 移动脚本到安全目录
+      - name: Move DIY Scripts to Safe Location
+        run: |
+          # 确保目标目录存在
+          mkdir -p "$DIY_CONFIG_DIR"
+          
+          # 移动 self_repo 下的所有内容到 diy_config/ 目录
+          mv $GITHUB_WORKSPACE/self_repo/* "$DIY_CONFIG_DIR/"
+          
+          # 移除空的自仓库目录
+          rm -rf $GITHUB_WORKSPACE/self_repo
+          
+          echo "✅ DIY Scripts moved to $DIY_CONFIG_DIR/"
+
 
       - name: Free up disk space
         uses: easimon/maximize-build-space@v8
@@ -57,6 +74,7 @@ jobs:
             python3 python3-dev python3-pyelftools python3-setuptools rsync subversion unzip wget ccache
           sudo chown "$USER":"$USER" "$GITHUB_WORKSPACE"
 
+      # 3. 克隆 OpenWrt 源码
       - name: Clone source code
         run: |
           git clone --depth=1 "$REPO_URL" -b "$REPO_BRANCH" openwrt
@@ -71,11 +89,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-lede-dl-feeds-
 
+      # 4. 应用 DIY-Part1 脚本
       - name: Apply custom feeds (DIY-Part1)
         working-directory: openwrt
         run: |
-          # 🌟 关键修复：使用固定的隔离路径
-          SCRIPT_ROOT="$GITHUB_WORKSPACE/self_repo"
+          # 引用固定路径
+          SCRIPT_ROOT="$GITHUB_WORKSPACE/$DIY_CONFIG_DIR"
           DIY_P1_PATH="$SCRIPT_ROOT/$DIY_P1_SH"
           
           # 拷贝 feeds.conf.default 文件 (如果存在)
@@ -93,11 +112,12 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
+      # 5. 应用 DIY-Part2 脚本
       - name: Apply custom config and patches (DIY-Part2)
         working-directory: openwrt
         run: |
-          # 🌟 关键修复：使用固定的隔离路径
-          SCRIPT_ROOT="$GITHUB_WORKSPACE/self_repo"
+          # 引用固定路径
+          SCRIPT_ROOT="$GITHUB_WORKSPACE/$DIY_CONFIG_DIR"
           DIY_P2_PATH="$SCRIPT_ROOT/$DIY_P2_SH"
           
           # 1. 拷贝自定义文件 (files 目录)
