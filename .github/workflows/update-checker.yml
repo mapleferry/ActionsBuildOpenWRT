@@ -7,41 +7,42 @@ env:
 on:
   workflow_dispatch:
   schedule:
-    - cron: 0 18 * * *
+    - cron: "0 18 * * *"  # UTC+8 02:00 → GitHub Actions cron is UTC
 
 jobs:
   check:
     runs-on: ubuntu-latest
-
     steps:
+      - name: Checkout dummy
+        uses: actions/checkout@v4
 
-    - name: Get Commit Hash
-      id: getHash
-      run: |
-        git clone --depth=1 $REPO_URL -b $REPO_BRANCH .
-        echo "commitHash=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+      - name: Get current HEAD
+        id: getHash
+        run: |
+          git clone --depth=1 "$REPO_URL" -b "$REPO_BRANCH" .
+          echo "commit_hash=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-    - name: Compare Commit Hash
-      id: cacheHash
-      uses: actions/cache@v4
-      with:
-        path: .commitHash
-        key: HEAD-${{ steps.getHash.outputs.commitHash }}
+      - name: Restore last commit
+        id: restore
+        uses: actions/cache@v4
+        with:
+          path: .last_commit
+          key: lede-master-${{ steps.getHash.outputs.commit_hash }}
 
-    - name: Save New Commit Hash
-      if: steps.cacheHash.outputs.cache-hit != 'true'
-      run: |
-        echo ${{ steps.getHash.outputs.commitHash }} | tee .commitHash
+      - name: Save and trigger if changed
+        if: steps.restore.outputs.cache-hit != 'true'
+        run: |
+          echo "${{ steps.getHash.outputs.commit_hash }}" > .last_commit
 
-    - name: Trigger build
-      if: steps.cacheHash.outputs.cache-hit != 'true'
-      uses: peter-evans/repository-dispatch@v3
-      with:
-        token: ${{ secrets.ACTIONS_TRIGGER_PAT }}
-        event-type: Source Code Update
+      - name: Trigger build workflow
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.ACTIONS_TRIGGER_PAT }}
+          event-type: Source Code Update
 
-    - name: Delete workflow runs
-      uses: Mattraks/delete-workflow-runs@v2
-      with:
-        retain_days: 2
-        keep_minimum_runs: 0
+      - name: Clean old runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          retain_days: 2
+          keep_minimum_runs: 0
