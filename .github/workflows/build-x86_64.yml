@@ -139,15 +139,35 @@ jobs:
       - name: Compile firmware
         id: compile
         working-directory: openwrt
+        # 🌟 优化：将编译日志重定向到文件，便于失败时排查问题
         run: |
           echo "🧵 Using $(nproc) threads"
-          make -j$(($(nproc) + 1)) V=s
+          
+          # 编译并将详细输出同时打印到终端和 build.log 文件
+          make -j$(($(nproc) + 1)) V=s 2>&1 | tee build.log
+          
+          # 检查编译是否成功
+          if [ $? -ne 0 ]; then
+            echo "❌ Compilation failed. Check build.log artifact."
+            echo "status=failure" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          
           echo "status=success" >> "$GITHUB_OUTPUT"
           DEVICE=$(grep -m1 '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/')
           echo "DEVICE_NAME=${DEVICE:+_$DEVICE}" >> "$GITHUB_ENV"
           echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> "$GITHUB_ENV"
 
-      # 4. 🌟 优化：完善 Organize firmware 步骤
+      # 关键新增：无论成功失败都上传编译日志
+      - name: Upload build log
+        uses: actions/upload-artifact@v4
+        if: always() 
+        with:
+          name: OpenWrt_compile_log
+          path: openwrt/build.log
+          retention-days: 1 # 日志保留一天
+
+      # 3. 🌟 优化：完善 Organize firmware 步骤
       - name: Organize firmware
         id: organize
         if: env.UPLOAD_FIRMWARE == 'true'
