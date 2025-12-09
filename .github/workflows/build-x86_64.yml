@@ -30,10 +30,10 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      # 1. 🌟 关键修复：手动克隆并替代 actions/checkout
+      # 1. 🌟 关键修复：手动克隆您的仓库，并替代 actions/checkout
       - name: Manual Clone Self Repo to DIY Config Dir
         run: |
-          # 克隆您的仓库到 diy_config 目录
+          # 克隆您的仓库到 diy_config 目录。使用 ${{ github.token }} 进行认证。
           git clone --depth=1 https://${{ github.token }}@github.com/${{ github.repository }} $DIY_CONFIG_DIR
           
           # 验证文件是否存在
@@ -49,10 +49,23 @@ jobs:
 
       - name: Free up disk space
         uses: easimon/maximize-build-space@v8
-        # ... (保持不变)
+        with:
+          root-reserve-mb: 3072
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
 
       - name: Install build dependencies
-        # ... (保持不变)
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt update
+          sudo apt install -y --no-install-recommends \
+            build-essential clang cmake g++ git libncurses5-dev libssl-dev \
+            python3 python3-dev python3-pyelftools python3-setuptools rsync subversion unzip wget ccache
+          sudo chown "$USER":"$USER" "$GITHUB_WORKSPACE"
 
       # 2. 克隆 OpenWrt 源码
       - name: Clone source code
@@ -60,7 +73,15 @@ jobs:
           git clone --depth=1 "$REPO_URL" -b "$REPO_BRANCH" openwrt
 
       - name: Cache DL and Feeds
-        # ... (保持不变)
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/dl
+            openwrt/feeds
+          # 注意：feeds.conf.default 现在位于 $DIY_CONFIG_DIR 中
+          key: ${{ runner.os }}-lede-dl-feeds-${{ hashFiles(format('{0}/{1}', env.DIY_CONFIG_DIR, 'feeds.conf.default')) }}
+          restore-keys: |
+            ${{ runner.os }}-lede-dl-feeds-
 
       # 3. 应用 DIY-Part1 脚本
       - name: Apply custom feeds (DIY-Part1)
@@ -80,8 +101,11 @@ jobs:
           "$DIY_P1_PATH"
 
       - name: Update and install feeds
-        # ... (保持不变)
-
+        working-directory: openwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          
       # 4. 应用 DIY-Part2 脚本
       - name: Apply custom config and patches (DIY-Part2)
         working-directory: openwrt
