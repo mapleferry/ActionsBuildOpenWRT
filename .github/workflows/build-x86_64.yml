@@ -21,11 +21,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 0  # 🌟 优化：编译超时设置为无限制 (0)
 
     steps:
-      # 1. 🌟 关键调整：先清理空间，再下载代码！
-      # 防止清理步骤误删了 checkout 下来的文件
+      # 1. 🌟 优化：先清理磁盘空间，防止 Checkout 的文件被误删
       - name: Free up disk space
         uses: easimon/maximize-build-space@v8
         with:
@@ -36,12 +35,10 @@ jobs:
           remove-codeql: true
           remove-docker-images: true
 
-      # 2. 标准 Checkout (代码会下载到 $GITHUB_WORKSPACE 根目录)
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 3. 🔍 调试步骤：确认文件真的在
-      - name: Check Files
+      - name: Check Files (Debug)
         run: |
           echo "Current directory: $PWD"
           ls -la
@@ -55,15 +52,25 @@ jobs:
       - name: Set up time zone
         run: sudo timedatectl set-timezone "$TZ"
 
+      # 2. 🌟 优化：增强依赖安装的可靠性
       - name: Install build dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          # 确保权限
+          sudo chown "$USER":"$USER" "$GITHUB_WORKSPACE"
+          
+          # 1. 独立更新列表
           sudo apt update
+          
+          # 2. 安装依赖 (已移除 ccache)
           sudo apt install -y --no-install-recommends \
             build-essential clang cmake g++ git libncurses5-dev libssl-dev \
-            python3 python3-dev python3-pyelftools python3-setuptools rsync subversion unzip wget ccache
-          sudo chown "$USER":"$USER" "$GITHUB_WORKSPACE"
+            python3 python3-dev python3-pyelftools python3-setuptools rsync subversion unzip wget 
+          
+          # 3. 清理系统，节省空间
+          sudo apt autoremove --purge -y
+          sudo apt clean
 
       - name: Clone source code
         run: |
@@ -75,7 +82,6 @@ jobs:
           path: |
             openwrt/dl
             openwrt/feeds
-          # 注意：feeds.conf.default 在根目录，不是 openwrt 目录
           key: ${{ runner.os }}-lede-dl-feeds-${{ hashFiles('feeds.conf.default') }}
           restore-keys: |
             ${{ runner.os }}-lede-dl-feeds-
@@ -88,7 +94,7 @@ jobs:
           
           echo "Running script: $DIY_P1_SCRIPT"
           
-          # 检查并复制 feeds.conf.default (如果您的仓库里有这个文件)
+          # 检查并复制 feeds.conf.default
           if [ -f "$GITHUB_WORKSPACE/feeds.conf.default" ]; then
             cp "$GITHUB_WORKSPACE/feeds.conf.default" .
             echo "✅ feeds.conf.default copied."
@@ -141,6 +147,7 @@ jobs:
           echo "DEVICE_NAME=${DEVICE:+_$DEVICE}" >> "$GITHUB_ENV"
           echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> "$GITHUB_ENV"
 
+      # 4. 🌟 优化：完善 Organize firmware 步骤
       - name: Organize firmware
         id: organize
         if: env.UPLOAD_FIRMWARE == 'true'
@@ -150,7 +157,12 @@ jobs:
             echo "❌ No firmware target directory found!" >&2
             exit 1
           fi
-          rm -rf "$TARGET_DIR/packages"
+          
+          # 移除目标目录下的 packages
+          rm -rf "$TARGET_DIR/packages" 
+          # 优化新增：移除 openwrt 根目录下的 packages，减小 Artifact 体积
+          rm -rf openwrt/bin/packages
+          
           echo "FIRMWARE=$GITHUB_WORKSPACE/$TARGET_DIR" >> "$GITHUB_ENV"
           echo "status=success" >> "$GITHUB_OUTPUT"
 
